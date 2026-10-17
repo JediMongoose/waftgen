@@ -48,7 +48,7 @@ input[type=range]{width:100%;accent-color:var(--accent);margin:2px 0 0}
     <div class="btns">
       <button id="shuf">Shuffle seed</button>
       <button id="reset">Reset</button>
-      <button id="dl" class="pri" hidden>Download STL (.zip)</button>
+      <button id="dl" class="pri">Download STL</button>
     </div>
     <div class="msg" id="msg" aria-live="polite"></div>
   </aside>
@@ -252,9 +252,10 @@ function zip(name,data){
   return new Blob([lh,nb,data,cd,nb,ee],{type:'application/zip'});
 }
 let dlApi=null;
-if(window.claude&&claude.use)claude.use('downloads').then(d=>{if(d){dlApi=d;$('dl').hidden=false}}).catch(()=>{});
+if(window.claude&&claude.use)claude.use('downloads').then(d=>{if(d){dlApi=d;$('dl').textContent='Download STL (.zip)'}}).catch(()=>{});
 $('dl').onclick=async()=>{
   const m=$('msg');
+  if(!dlApi){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([stl()],{type:'model/stl'}));a.download='wafting_sheet.stl';document.body.appendChild(a);a.click();a.remove();m.textContent='Downloaded wafting_sheet.stl';return}
   try{m.textContent='Preparing…';
     const r=await dlApi.save({filename:'wafting_sheet_stl.zip',data:zip('wafting_sheet.stl',stl())});
     m.textContent=r.status==='saved'?'Saved. Unzip to get wafting_sheet.stl.':'';
