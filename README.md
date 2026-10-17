@@ -7,3 +7,5 @@ Try it here: https://jedimongoose.github.io/waftgen/
 
 Written by Claude.AI
 
+![](https://github.com/JediMongoose/waftgen/blob/main/Screenshot1.png)
+![](https://github.com/JediMongoose/waftgen/blob/main/Screenshot2.png)
