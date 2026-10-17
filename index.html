@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Wafting Sheet Generator</title>
+<style>
+:root{--bg:#f4f5f8;--panel:#fff;--ink:#1b1f2a;--muted:#5b6475;--line:#dfe3ea;--accent:#3a5bd9;--on:#fff;--stage:radial-gradient(circle at 50% 40%,#fff,#e3e7ef);
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12141a;--panel:#1a1d26;--ink:#e9ecf4;--muted:#9aa3b5;--line:#2a2f3c;--accent:#7b9be6;--on:#10131a;--stage:radial-gradient(circle at 50% 40%,#252a3a,#0f1117)}}
+:root[data-theme="dark"]{--bg:#12141a;--panel:#1a1d26;--ink:#e9ecf4;--muted:#9aa3b5;--line:#2a2f3c;--accent:#7b9be6;--on:#10131a;--stage:radial-gradient(circle at 50% 40%,#252a3a,#0f1117)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.app{display:flex;height:100%}
+.stage{flex:1;position:relative;min-width:0;background:var(--stage)}
+canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+canvas:active{cursor:grabbing}
+.hint{position:absolute;left:12px;bottom:10px;font-size:12px;color:var(--muted);pointer-events:none}
+aside{width:320px;overflow-y:auto;background:var(--panel);border-left:1px solid var(--line);padding:18px}
+h1{font-size:18px;margin:0 0 2px}
+.stat{color:var(--muted);font-size:12px;margin-bottom:14px}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:14px}
+.seg button{flex:1;padding:8px 4px;border:0;background:transparent;color:var(--ink);font:inherit;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--on);font-weight:600}
+.grp{margin-bottom:6px}.grp[hidden]{display:none}
+.row{margin:0 0 10px}
+.row .top{display:flex;justify-content:space-between;font-size:13px}
+.row output{color:var(--muted);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--accent);margin:2px 0 0}
+.btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.btns button{padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--ink);font:inherit;cursor:pointer}
+.btns button.pri{background:var(--accent);color:var(--on);border-color:var(--accent);font-weight:600}
+.btns button[hidden]{display:none}
+.msg{font-size:12px;color:var(--muted);margin-top:8px;min-height:16px}
+.up{padding:8px 12px;border-radius:8px;border:1px solid var(--accent);background:transparent;color:var(--accent);font:inherit;cursor:pointer;width:100%}
+@media (max-width:800px){.app{flex-direction:column}.stage{flex:0 0 52%}aside{width:auto;flex:1;border-left:0;border-top:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="stage" id="stage"><canvas id="cv"></canvas><div class="hint">Drag to rotate · scroll to zoom</div></div>
+  <aside>
+    <h1>Wafting sheet</h1>
+    <div class="stat" id="stat"></div>
+    <div class="seg" id="seg"></div>
+    <div id="groups"></div>
+    <div class="btns">
+      <button id="shuf">Shuffle seed</button>
+      <button id="reset">Reset</button>
+      <button id="dl" class="pri" hidden>Download STL (.zip)</button>
+    </div>
+    <div class="msg" id="msg" aria-live="polite"></div>
+  </aside>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const D=Math.PI/180,sn=d=>Math.sin(d*D),cs=d=>Math.cos(d*D),S=200,N=120;
+const DEF={mode:'random',thickness:3,seed:7,n_waves:9,wl_min:40,wl_max:220,amp_max:7,warp:30,
+ s_wl:45,s_amp:4.5,s_dir:20,s_chirp:1,s_bend:140,s_var:.5,s_cross:.3,
+ u_wl:40,u_amp:4,u_dir:20,u_cross:.35,
+ a_layout:'linear',a_amp:8,a_dir:0,a_start:0,a_len:100,a_smooth:2};
+const P={...DEF};
+const SL={
+ all:[['thickness','Thickness (mm)',1,10,.5]],
+ random:[['seed','Seed',1,99,1],['n_waves','Number of waves',2,16,1],['wl_min','Shortest wavelength (mm)',15,100,1],['wl_max','Longest wavelength (mm)',100,400,5],['amp_max','Max amplitude (mm)',1,20,.5],['warp','Warp / distortion (mm)',0,60,1]],
+ semi:[['s_wl','Starting wavelength (mm)',20,120,1],['s_amp','Wave height (mm)',.5,12,.1],['s_dir','Direction (°)',0,180,1],['s_chirp','Wavelength drift',-2,2,.1],['s_bend','Ridge bend (°)',0,300,5],['s_var','Height variation',0,.9,.05],['s_cross','Cross-wave strength',0,1,.05]],
+ uniform:[['u_wl','Wavelength (mm)',15,120,1],['u_amp','Wave height (mm)',.5,12,.1],['u_dir','Direction (°)',0,180,1],['u_cross','Cross-wave strength',0,1,.05]],
+ audio:[['a_amp','Amplitude (mm)',1,30,.5],['a_dir','Direction (°)',0,180,1],['a_start','Start position (%)',0,95,1],['a_len','Length used (%)',1,100,1],['a_smooth','Smoothing',0,10,1]]
+};
+const MODES=[['random','Random'],['semi','Semi'],['uniform','Uniform'],['audio','Audio']];
+
+function rng(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+
+function field(){
+  if(P.mode==='random'){
+    const r=rng(P.seed*9973+1),n=P.n_waves;
+    const wl=[],dr=[],ph=[],am=[];
+    for(let k=0;k<n;k++){const a=r(),b=r(),c=r(),d=r();
+      const w=P.wl_min+(P.wl_max-P.wl_min)*a;
+      wl.push(w);dr.push(360*b);ph.push(360*c);
+      am.push(P.amp_max*Math.pow(w/P.wl_max,.9)*(.3+.7*d));}
+    const W=[0,1,2,3].map(()=>360*r()),E=[360*r(),360*r()],w=P.warp;
+    return(x,y)=>{
+      const wx=x+w*sn(360*y/130+W[0])+.5*w*sn(360*(x+y)/70+W[1]);
+      const wy=y+w*sn(360*x/150+W[2])+.5*w*sn(360*(x-y)/85+W[3]);
+      let s=0;for(let k=0;k<n;k++)s+=am[k]*sn(360*(wx*cs(dr[k])+wy*sn(dr[k]))/wl[k]+ph[k]);
+      return(.675+.325*sn(360*(x*cs(E[0])+y*sn(E[0]))/200+E[1]))*s;};
+  }
+  if(P.mode==='semi'){
+    const d=P.s_dir;
+    return(x,y)=>{
+      const u=x*cs(d)+y*sn(d),v=-x*sn(d)+y*cs(d);
+      const p1=360*u/P.s_wl+P.s_chirp*360*(u/S)**2+P.s_bend*sn(360*v/(S*1.4)+30);
+      const e=1+P.s_var*(.6*sn(360*x/260+30)+.4*sn(360*y/200+100));
+      const p2=360*(x*cs(100)+y*sn(100))/32+40+.7*P.s_bend*sn(360*x/170+80);
+      return e*P.s_amp*(sn(p1)+P.s_cross*sn(p2));};
+  }
+  if(P.mode==='audio'){
+    const pr=profile(),M=pr.length-1,A=P.a_amp,rd=P.a_layout==='radial',d=P.a_dir;
+    let lo=1e9,hi=-1e9;
+    if(!rd)[[0,0],[S,0],[0,S],[S,S]].forEach(([cx,cy])=>{const u=cx*cs(d)+cy*sn(d);lo=Math.min(lo,u);hi=Math.max(hi,u)});
+    const R=S/Math.SQRT2;
+    return(x,y)=>{
+      const p=rd?Math.hypot(x-S/2,y-S/2)/R:(x*cs(d)+y*sn(d)-lo)/(hi-lo);
+      const f=Math.min(1,Math.max(0,p))*M,i=Math.min(M-1,f|0),t=f-i;
+      return A*(pr[i]*(1-t)+pr[i+1]*t);};
+  }
+  return(x,y)=>P.u_amp*sn(360*(x*cs(P.u_dir)+y*sn(P.u_dir))/P.u_wl)
+    +P.u_cross*P.u_amp*sn(360*(x*cs(100)+y*sn(100))/28+40);
+}
+
+// ---------- audio profile ----------
+let wav=null;
+function profile(){
+  const M=512,len=wav.length,st=P.a_start/100*len,span=Math.max(2,Math.min(len-1-st,P.a_len/100*len));
+  const out=new Float32Array(M+1);let pk=0;
+  for(let b=0;b<=M;b++){
+    const a0=st+span*b/M,a1=st+span*(b+1)/M,i0=Math.floor(a0),i1=Math.floor(a1);let v;
+    if(i1-i0<2){const t=a0-i0;v=wav[Math.min(i0,len-1)]*(1-t)+wav[Math.min(i0+1,len-1)]*t}
+    else{v=0;for(let j=i0;j<=Math.min(i1,len-1);j++)if(Math.abs(wav[j])>Math.abs(v))v=wav[j]}
+    out[b]=v;if(Math.abs(v)>pk)pk=Math.abs(v);}
+  if(pk>0)for(let b=0;b<=M;b++)out[b]/=pk;
+  const k=P.a_smooth*3;if(!k)return out;
+  const sm=new Float32Array(M+1);
+  for(let b=0;b<=M;b++){let s=0,c=0;for(let j=Math.max(0,b-k);j<=Math.min(M,b+k);j++){s+=out[j];c++}sm[b]=s/c}
+  return sm;
+}
+
+// ---------- three.js scene ----------
+const cv=document.getElementById('cv'),stage=document.getElementById('stage');
+const renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+const scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(35,1,1,3000);
+cam.up.set(0,0,1);
+const hemi=new THREE.HemisphereLight(0xffffff,0x8896b8,.75);hemi.position.set(0,0,1);scene.add(hemi);
+const l1=new THREE.DirectionalLight(0xffffff,.9);l1.position.set(150,-200,300);scene.add(l1);
+const l2=new THREE.DirectionalLight(0xffffff,.35);l2.position.set(-200,150,100);scene.add(l2);
+const mat=new THREE.MeshStandardMaterial({color:0x7b9be6,roughness:.55,metalness:.05});
+let mesh=null,POS,IDX;
+let az=-1.9,pol=1,rad=430;
+function placeCam(){cam.position.set(rad*Math.sin(pol)*Math.cos(az),rad*Math.sin(pol)*Math.sin(az),6+rad*Math.cos(pol));cam.lookAt(0,0,6)}
+function draw(){placeCam();renderer.render(scene,cam)}
+new ResizeObserver(()=>{const w=stage.clientWidth,h=stage.clientHeight;if(!w||!h)return;renderer.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix();draw()}).observe(stage);
+
+let drag=null;
+cv.addEventListener('pointerdown',e=>{drag=[e.clientX,e.clientY];cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointermove',e=>{if(!drag)return;az-=(e.clientX-drag[0])*.008;pol=Math.min(1.5,Math.max(.15,pol-(e.clientY-drag[1])*.008));drag=[e.clientX,e.clientY];draw()});
+['pointerup','pointercancel'].forEach(t=>cv.addEventListener(t,()=>drag=null));
+cv.addEventListener('wheel',e=>{e.preventDefault();rad=Math.min(900,Math.max(150,rad*Math.exp(e.deltaY*.001)));draw()},{passive:false});
+
+// ---------- mesh ----------
+function build(){
+  const n=N+1,st=S/N,t=P.thickness,f=field(),h=new Float32Array(n*n);
+  let mn=1e9,mx=-1e9;
+  for(let j=0;j<n;j++)for(let i=0;i<n;i++){const v=f(i*st,j*st);h[j*n+i]=v;if(v<mn)mn=v;if(v>mx)mx=v}
+  const pos=new Float32Array(2*n*n*3);
+  for(let k=0;k<n*n;k++){
+    const i=k%n,j=(k/n)|0,z=h[k]-mn+t,x=i*st-S/2,y=j*st-S/2;
+    pos.set([x,y,z],3*k);pos.set([x,y,z-t],3*(k+n*n));}
+  const T=(i,j)=>j*n+i,B=(i,j)=>n*n+j*n+i,idx=[];
+  const q=(a,b,c,d)=>idx.push(a,d,c,a,c,b);
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){
+    q(T(i,j),T(i,j+1),T(i+1,j+1),T(i+1,j));
+    q(B(i,j),B(i+1,j),B(i+1,j+1),B(i,j+1));}
+  for(let i=0;i<N;i++){
+    q(T(i,0),T(i+1,0),B(i+1,0),B(i,0));
+    q(T(i+1,N),T(i,N),B(i,N),B(i+1,N));
+    q(T(0,i+1),T(0,i),B(0,i),B(0,i+1));
+    q(T(N,i),T(N,i+1),B(N,i+1),B(N,i));}
+  POS=pos;IDX=Uint32Array.from(idx);
+  const g=new THREE.BufferGeometry();
+  g.setAttribute('position',new THREE.BufferAttribute(pos,3));
+  g.setIndex(new THREE.BufferAttribute(IDX,1));
+  g.computeVertexNormals();
+  if(mesh){mesh.geometry.dispose();scene.remove(mesh)}
+  mesh=new THREE.Mesh(g,mat);scene.add(mesh);
+  document.getElementById('stat').textContent=S+' × '+S+' × '+t+' mm sheet · overall height '+(mx-mn+t).toFixed(1)+' mm';
+  draw();
+}
+let pend=0;const sched=()=>{if(!pend)pend=requestAnimationFrame(()=>{pend=0;build()})};
+
+// ---------- UI ----------
+const $=id=>document.getElementById(id),inputs={},outs={};
+const fmt=(v,s)=>(+v).toFixed(s<.1?2:s<1?1:0);
+const seg=$('seg'),groups=$('groups');
+MODES.forEach(([m,l])=>{const b=document.createElement('button');b.textContent=l;b.dataset.m=m;b.onclick=()=>setMode(m);seg.appendChild(b)});
+for(const g in SL){
+  const d=document.createElement('div');d.className='grp';d.dataset.g=g;
+  SL[g].forEach(([k,label,min,max,step])=>{
+    const r=document.createElement('div');r.className='row';
+    r.innerHTML='<div class="top"><span>'+label+'</span><output></output></div><input type="range" min="'+min+'" max="'+max+'" step="'+step+'">';
+    const inp=r.querySelector('input'),out=r.querySelector('output');
+    inp.value=P[k];out.textContent=fmt(P[k],step);inputs[k]=inp;outs[k]=[out,step];
+    inp.oninput=()=>{P[k]=+inp.value;out.textContent=fmt(P[k],step);sched()};
+    d.appendChild(r)});
+  groups.appendChild(d);
+}
+groups.querySelector('[data-g="audio"]').insertAdjacentHTML('afterbegin','<div class="row"><button id="up" class="up">Upload .wav file</button><input id="file" type="file" accept=".wav,audio/wav,audio/x-wav" hidden><div class="msg" id="fi"></div></div><div class="seg" id="lay"><button data-l="linear">Linear</button><button data-l="radial">Radial</button></div>');
+function setLayout(l){P.a_layout=l;$('lay').querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.l===l));inputs.a_dir.closest('.row').hidden=l==='radial';sched()}
+$('lay').querySelectorAll('button').forEach(b=>b.onclick=()=>setLayout(b.dataset.l));
+setLayout('linear');
+(()=>{const n=24000,a=new Float32Array(n);for(let i=0;i<n;i++){const t=i/n;a[i]=Math.sin(2*Math.PI*(3*t+12*t*t))*(.25+.75*Math.sin(Math.PI*t)**2)*(1+.4*Math.sin(2*Math.PI*5*t))}wav=a;$('fi').textContent='Demo tone · upload a .wav to replace it'})();
+$('up').onclick=()=>$('file').click();
+$('file').onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;const fi=$('fi');fi.textContent='Reading…';
+  try{
+    const Ctx=window.OfflineAudioContext||window.webkitOfflineAudioContext;
+    const buf=await new Ctx(1,1,44100).decodeAudioData(await f.arrayBuffer());
+    const n=buf.length,ch=buf.numberOfChannels,mono=new Float32Array(n);
+    for(let c=0;c<ch;c++){const d=buf.getChannelData(c);for(let i=0;i<n;i++)mono[i]+=d[i]/ch}
+    wav=mono;fi.textContent=f.name+' · '+buf.duration.toFixed(1)+' s';
+    if(P.mode!=='audio')setMode('audio');else sched();
+  }catch(err){fi.textContent='Could not read that file. Try a standard PCM .wav.'}
+  e.target.value='';
+};
+function sync(k){inputs[k].value=P[k];outs[k][0].textContent=fmt(P[k],outs[k][1])}
+function setMode(m){
+  P.mode=m;
+  seg.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.m===m));
+  groups.querySelectorAll('.grp').forEach(d=>d.hidden=!(d.dataset.g==='all'||d.dataset.g===m));
+  $('shuf').hidden=m!=='random';
+  sched();
+}
+$('shuf').onclick=()=>{P.seed=1+Math.floor(Math.random()*99);sync('seed');sched()};
+$('reset').onclick=()=>{[...SL.all,...SL[P.mode]].forEach(([k])=>{P[k]=DEF[k];sync(k)});if(P.mode==='audio')setLayout('linear');sched()};
+
+// ---------- STL export (zipped: STL files aren't an allowed download type) ----------
+function stl(){
+  const tc=IDX.length/3,buf=new ArrayBuffer(84+tc*50),dv=new DataView(buf);
+  dv.setUint32(80,tc,true);let o=84;
+  for(let t=0;t<tc;t++){
+    const a=IDX[3*t]*3,b=IDX[3*t+1]*3,c=IDX[3*t+2]*3;
+    const ux=POS[b]-POS[a],uy=POS[b+1]-POS[a+1],uz=POS[b+2]-POS[a+2];
+    const vx=POS[c]-POS[a],vy=POS[c+1]-POS[a+1],vz=POS[c+2]-POS[a+2];
+    let nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;const l=Math.hypot(nx,ny,nz)||1;
+    [nx/l,ny/l,nz/l,POS[a],POS[a+1],POS[a+2],POS[b],POS[b+1],POS[b+2],POS[c],POS[c+1],POS[c+2]].forEach((v,i)=>dv.setFloat32(o+4*i,v,true));
+    o+=50;}
+  return new Uint8Array(buf);
+}
+function crc32(b){let t=crc32.t;if(!t){t=crc32.t=[];for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t.push(c>>>0)}}
+  let r=-1;for(let i=0;i<b.length;i++)r=t[(r^b[i])&255]^(r>>>8);return(r^-1)>>>0}
+function zip(name,data){
+  const nb=new TextEncoder().encode(name),crc=crc32(data),n=data.length;
+  const lh=new DataView(new ArrayBuffer(30)),cd=new DataView(new ArrayBuffer(46)),ee=new DataView(new ArrayBuffer(22));
+  lh.setUint32(0,0x04034b50,true);lh.setUint16(4,20,true);lh.setUint16(12,0x21,true);
+  lh.setUint32(14,crc,true);lh.setUint32(18,n,true);lh.setUint32(22,n,true);lh.setUint16(26,nb.length,true);
+  cd.setUint32(0,0x02014b50,true);cd.setUint16(4,20,true);cd.setUint16(6,20,true);cd.setUint16(14,0x21,true);
+  cd.setUint32(16,crc,true);cd.setUint32(20,n,true);cd.setUint32(24,n,true);cd.setUint16(28,nb.length,true);
+  ee.setUint32(0,0x06054b50,true);ee.setUint16(8,1,true);ee.setUint16(10,1,true);
+  ee.setUint32(12,46+nb.length,true);ee.setUint32(16,30+nb.length+n,true);
+  return new Blob([lh,nb,data,cd,nb,ee],{type:'application/zip'});
+}
+let dlApi=null;
+if(window.claude&&claude.use)claude.use('downloads').then(d=>{if(d){dlApi=d;$('dl').hidden=false}}).catch(()=>{});
+$('dl').onclick=async()=>{
+  const m=$('msg');
+  try{m.textContent='Preparing…';
+    const r=await dlApi.save({filename:'wafting_sheet_stl.zip',data:zip('wafting_sheet.stl',stl())});
+    m.textContent=r.status==='saved'?'Saved. Unzip to get wafting_sheet.stl.':'';
+  }catch(e){m.textContent=e&&e.code==='declined'?'':'Download unavailable here.'}
+};
+
+setMode('random');
+</script>
+</body>
+</html>
